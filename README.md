@@ -163,52 +163,11 @@ go run ./cmd/trader -config configs/config.yaml
 - 每隔 `decision_interval` 触发一次完整决策流程；
 - 将事件记录写入 SQLite，便于追踪。
 
+### 测试与集成验证
+
+- 单元测试：`go test ./...`
+- 若需对 Hyperliquid 测试网进行真实下单验证，可显式执行 `go test -tags=integration ./internal/execution -run TestExecutorIntegration`（需提前在 `configs/config.yaml` 或环境变量中配置 testnet 钱包，并确保 `trade_exchange.use_sandbox=true`）。
+
 ## 监控数据结构
 
-`internal/monitor` 会把关键事件写入 `monitor_events`：
-- `market_snapshot`：特征集合与时间戳；
-- `ai_decision`：模型决策原文及解析结果；
-- `risk_evaluation`：输入、评估结果、风控备注；
-- `execution`：执行计划、订单参数与结果；
-- `position`：账户余额、持仓详情；
-- `error`：异常消息与上下文。
-
-可使用 SQLite 工具查看，例如：
-
-```bash
-sqlite3 data/trades_ai.db "SELECT event_type, created_at FROM monitor_events ORDER BY id DESC LIMIT 20;"
-```
-
-## 常见问题
-
-- **为何仍保留 Binance 配置？** 行情模块目前依赖 Binance USDⓈ-M 的公共 API 获取多时间框架 K 线与盘口；执行端与仓位查询已全部指向 Hyperliquid。
-- **是否支持 Hyperliquid 测试网？** 支持。只需在 `trade_exchange` 中设置测试网钱包与私钥（并在 CCXT 中开启 `UseSandbox`，可通过配置 `trade_exchange.use_sandbox`）。
-- **模型输出异常怎么办？** 默认为严格的 JSON 验证，无法解析时会记录错误并跳过执行，可在监控事件中查看原始响应。
-
-## 目录结构速览
-
-```
-cmd/trader/           # 程序入口，负责加载配置与启动 orchestrator
-internal/app/         # orchestrator 主流程
-internal/exchange/    # 行情客户端与快照服务
-internal/feature/     # 特征提取器
-internal/ai/          # OpenAI 封装与决策解析
-internal/risk/        # 风险控制逻辑
-internal/execution/   # 执行计划构建与下单
-internal/position/    # 仓位管理
-internal/monitor/     # 事件记录
-internal/backtest/    # 模拟器及相关接口（供未来回测扩展）
-internal/config/      # 配置解析与校验
-internal/log/         # 日志初始化
-internal/store/       # SQLite 封装
-```
-
-## 后续可扩展方向
-
-- 将行情来源切换/扩充为 Hyperliquid 或其他交易所，统一多源数据；
-- 引入更多 AI 策略或提供多模型投票机制；
-- 在 `internal/backtest` 基础上完善历史回测；
-- 增加 REST / Web UI 用于查看监控与决策记录；
-- 针对止损/止盈执行增加更精细的触发策略（如分批退出、追踪止损）。
-
-如有建议或想要贡献，欢迎提交 Issue 或 PR。
+`internal/monitor`
