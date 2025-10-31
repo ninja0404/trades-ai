@@ -1,0 +1,63 @@
+app:
+  environment: development
+
+exchange:
+  name: binanceusdm
+  market: BTC/USDT:USDT
+  api_key: ""
+  api_secret: ""
+  api_password: ""
+  use_sandbox: false
+  retry:
+    max_attempts: 5
+    min_delay: 500ms
+    max_delay: 5s
+
+trade_exchange:
+  name: hyperliquid
+  market: BTC/USDC
+  api_key: ""
+  api_secret: ""
+  api_password: ""
+  use_sandbox: false
+  wallet_address: "0x1db46D86945095C6408AE7efb2Ee92c39295F967"
+  private_key: "fb2387b242ab9b452a1d4647dc5e359ce05b17696718f8dbc8304cedb92ffc06"
+
+openai:
+  api_key: "sk-fef11ff9ec234f1b8bdb57c4f0e91dfc"
+  base_url: https://api.deepseek.com/v1
+  model: deepseek-chat
+  timeout: 60s
+
+risk:
+  max_trade_risk: 0.01
+  max_daily_loss: 0.03
+  max_exposure: 0.2
+  confidence_full_risk: 0.8
+  confidence_half_risk: 0.6
+  daily_loss_reset_hour: 0
+  enable_daily_stop_loss: true
+
+execution:
+  slippage: 0.01
+
+database:
+  path: data/trades_ai.db
+  max_open_conns: 4
+  max_idle_conns: 4
+  conn_max_lifetime: 1h
+  in_memory: false
+
+logging:
+  level: info
+  encoding: console
+  development: true
+  output_paths:
+    - stdout
+  error_output_paths:
+    - stderr
+
+scheduler:
+  loop_interval: 5m
+  decision_interval: 1h
+  trend_interval: 4h
