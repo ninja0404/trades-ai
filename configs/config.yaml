@@ -28,8 +28,8 @@ trade_exchange:
   api_secret: ""
   api_password: ""
   use_sandbox: true
-  wallet_address: "0x99Df3B05382b3e662aC20f67255B11aE17f0930d"
-  private_key: "b3c459f9493bde098d0640a6e582203afb257a006cc14ebb7795a5d83b218e1e"
+  wallet_address: ""
+  private_key: ""
 
 openai:
   api_key: "sk-fef11ff9ec234f1b8bdb57c4f0e91dfc"
