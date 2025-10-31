@@ -34,6 +34,36 @@
 | `internal/monitor` | 事件记录 | 持久化行情、决策、风险、执行等关键数据到 SQLite |
 | `internal/backtest` | 模拟组件 | 目前用于指标复用，若后续扩展回测可直接调用 |
 
+## AI 决策输出格式
+
+模型需要按固定结构返回决策 JSON，核心字段如下：
+
+```json
+{
+  "intent": "OPEN|ADJUST|CLOSE|HEDGE",
+  "direction": "LONG|SHORT|FLAT|AUTO",
+  "target_exposure_pct": 0.0,
+  "adjustment_pct": 0.0,
+  "confidence": 0.0,
+  "reasoning": "...",
+  "order_preference": "MARKET|LIMIT|AUTO",
+  "new_stop_loss": "...",
+  "new_take_profit": "...",
+  "risk_comment": "..."
+}
+```
+
+- **intent**：本次操作意图，`CLOSE` 表示直接将仓位降为 0；`HEDGE` 可用于反向操作或对冲。
+- **direction**：目标方向；`AUTO` 允许根据现有仓位或分析自行判断，`FLAT` 强制回到空仓。
+- **target_exposure_pct**：期望的仓位绝对占比（0~1），例如 `0.25` 表示 25% 净值；若 intent=CLOSE 请填 0。
+- **adjustment_pct**：在当前仓位基础上的相对调整幅度，可选；正值表示增加仓位，负值表示减仓，未调整填 0。
+- **confidence**：当前结论的可靠度，0~1 之间；风险层会根据信心阈值调节可用风险额度。
+- **order_preference**：下单方式偏好（默认 `AUTO`）。
+- **new_stop_loss / new_take_profit**：新的止损/止盈价格，必须为可解析的数值字符串。
+- **risk_comment**：任何额外的风险提示，用于帮助风控和监控记录。
+
+风险层会基于上述字段、账户参数以及最新行情重新评估目标仓位，必要时对目标进行裁剪或拒绝执行。执行层会将 `target_exposure_pct` 转换成具体手数，并根据 `order_preference` 和止损/止盈信息构造主单与保护单。 
+
 ## 环境要求
 
 - Go 1.21+（建议与 `go.mod` 保持一致）

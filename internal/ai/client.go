@@ -103,9 +103,10 @@ func (c *Client) GenerateDecision(ctx context.Context, features feature.FeatureS
 	}
 
 	c.logger.Info("AI 决策生成成功",
-		zap.String("decision", decision.Decision),
+		zap.String("intent", decision.Intent),
+		zap.String("direction", decision.Direction),
+		zap.Float64("target_exposure_pct", decision.TargetExposurePct),
 		zap.Float64("confidence", decision.Confidence),
-		zap.String("position_action", decision.PositionAction),
 	)
 
 	return decision, nil
@@ -118,7 +119,7 @@ func parseDecision(content string) (Decision, error) {
 	}
 
 	var decision Decision
-	if err := json.Unmarshal(jsonPayload, &decision); err != nil {
+	if err = json.Unmarshal(jsonPayload, &decision); err != nil {
 		return Decision{}, fmt.Errorf("解析决策JSON失败: %w", err)
 	}
 
