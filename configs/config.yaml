@@ -20,10 +20,10 @@ exchange:
 trade_exchange:
   name: hyperliquid
   markets:
-    - BTC/USDC:USDC
-    - ETH/USDC:USDC
-    - SOL/USDC:USDC
-    - DOGE/USDC:USDC
+    - BTC/USDC
+    - ETH/USDC
+    - SOL/USDC
+    - DOGE/USDC
   api_key: ""
   api_secret: ""
   api_password: ""

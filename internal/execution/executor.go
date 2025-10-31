@@ -75,22 +75,6 @@ func (e *Executor) Execute(ctx context.Context, orders []OrderRequest) (Result, 
 }
 
 func (e *Executor) submitOrder(ctx context.Context, order OrderRequest) error {
-	// 验证订单数量
-	if order.Amount <= 0 {
-		return fmt.Errorf("execution: 订单数量无效 amount=%.8f type=%s side=%s",
-			order.Amount, order.Type, order.Side)
-	}
-
-	e.logger.Info("提交订单",
-		zap.String("type", order.Type),
-		zap.String("side", string(order.Side)),
-		zap.Float64("amount", order.Amount),
-		zap.Float64("price", order.Price),
-		zap.Bool("reduceOnly", order.ReduceOnly),
-		zap.Bool("closeAll", order.CloseAll),
-		zap.Bool("isTrigger", order.IsTrigger),
-	)
-
 	var err error
 	for attempt := 1; attempt <= e.maxRetry; attempt++ {
 		params := cloneParams(order.Params)
@@ -107,7 +91,6 @@ func (e *Executor) submitOrder(ctx context.Context, order OrderRequest) error {
 			switch order.Type {
 			case "market":
 				var opts []ccxt.CreateMarketOrderOptions
-				// Hyperliquid 需要价格来计算最大滑点价格
 				if order.Price > 0 {
 					opts = append(opts, ccxt.WithCreateMarketOrderPrice(order.Price))
 				}
@@ -227,8 +210,7 @@ func buildOrderRequests(plan ExecutionPlan, slippage float64) ([]OrderRequest, e
 	}
 	amount := amountExposure * plan.Account.TotalEquity / plan.MarketPrice
 	if amount <= 0 {
-		return nil, fmt.Errorf("execution: 计算下单手数无效 amount=%.8f exposureDiff=%.6f equity=%.2f price=%.2f",
-			amount, exposureDiff, plan.Account.TotalEquity, plan.MarketPrice)
+		return nil, fmt.Errorf("execution: 计算下单手数无效 amount=%.6f", amount)
 	}
 
 	reduceOnly := sameDirection(target, current) && math.Abs(target) <= math.Abs(current)
