@@ -302,6 +302,9 @@ type assetState struct {
 func newTradeClient(cfg config.TradeExchangeConfig) (*ccxt.Hyperliquid, error) {
 	userConfig := map[string]interface{}{
 		"enableRateLimit": true,
+		"options": map[string]interface{}{
+			"defaultType": "swap", // 设置默认交易类型为永续合约
+		},
 	}
 	if cfg.APIKey != "" {
 		userConfig["apiKey"] = cfg.APIKey
