@@ -42,7 +42,7 @@ func (a *App) Run(ctx context.Context) error {
 		return fmt.Errorf("初始化交易所客户端失败: %w", err)
 	}
 
-	orchestrator, err := newOrchestrator(exClient, orchestratorConfig{
+	orch, err := newOrchestrator(exClient, orchestratorConfig{
 		exchange:  a.cfg.Exchange,
 		trade:     a.cfg.Trade,
 		openAI:    a.cfg.OpenAI,
@@ -59,7 +59,7 @@ func (a *App) Run(ctx context.Context) error {
 		loopInterval = 5 * time.Minute
 	}
 
-	if err := orchestrator.Tick(ctx); err != nil {
+	if err = orch.Tick(ctx); err != nil {
 		a.logger.Error("首次执行失败", zap.Error(err))
 	}
 
@@ -75,7 +75,7 @@ func (a *App) Run(ctx context.Context) error {
 			a.logger.Info("系统收到退出信号，正在停止")
 			return nil
 		case <-ticker.C:
-			if err := orchestrator.Tick(ctx); err != nil {
+			if err = orch.Tick(ctx); err != nil {
 				a.logger.Error("执行调度失败", zap.Error(err))
 			}
 		}
