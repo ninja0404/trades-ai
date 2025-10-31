@@ -24,6 +24,8 @@ type ExecutionPlan struct {
 	CurrentExposure float64
 	TargetExposure  float64
 	MarketPrice     float64
+	StopLoss        float64
+	TakeProfit      float64
 	RiskAmount      float64
 	Decision        ai.Decision
 	RiskResult      risk.EvaluationResult

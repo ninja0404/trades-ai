@@ -48,6 +48,12 @@ func (a *App) Run(ctx context.Context) error {
 		return err
 	}
 
+	if port := a.cfg.App.MonitorPort; port > 0 {
+		if err := startMonitorServer(ctx, orch.Monitor(), port, a.logger); err != nil {
+			return err
+		}
+	}
+
 	loopInterval := a.cfg.Scheduler.LoopInterval
 	if loopInterval <= 0 {
 		loopInterval = 5 * time.Minute

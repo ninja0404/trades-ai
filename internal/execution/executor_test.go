@@ -12,22 +12,22 @@ import (
 	"trades-ai/internal/risk"
 )
 
-func TestBuildOrderRequests_GeneratesMainAndProtectionOrders(t *testing.T) {
+func TestBuildOrderRequests_IncludesProtectionParams(t *testing.T) {
 	plan := makeBasePlan()
 	plan.CurrentExposure = 0
 	plan.TargetExposure = 0.10
 	plan.MarketPrice = 50000
 	plan.Account.TotalEquity = 100000
-	plan.Decision.NewStopLoss = "45000"
-	plan.Decision.NewTakeProfit = "52000"
+	plan.StopLoss = 45000
+	plan.TakeProfit = 52000
 
-	orders, err := buildOrderRequests(plan, 0.01)
+	orders, err := buildOrderRequests(plan, Options{Slippage: 0.01, TimeInForce: "GTC"})
 	if err != nil {
 		t.Fatalf("buildOrderRequests returned error: %v", err)
 	}
 
-	if len(orders) != 3 {
-		t.Fatalf("expected 3 orders (1 main + 2 protection), got %d", len(orders))
+	if len(orders) != 1 {
+		t.Fatalf("expected single combined order, got %d", len(orders))
 	}
 
 	main := orders[0]
@@ -47,46 +47,17 @@ func TestBuildOrderRequests_GeneratesMainAndProtectionOrders(t *testing.T) {
 	if val, ok := main.Params["slippage"]; !ok || val != formatSlippage(0.01) {
 		t.Errorf("expected slippage param, got %v", main.Params)
 	}
-
-	triggers := orders[1:]
-	if len(triggers) != 2 {
-		t.Fatalf("expected 2 trigger orders, got %d", len(triggers))
+	if main.Params["stopLossPrice"] != float64(45000) {
+		t.Errorf("expected stopLossPrice=45000, got %v", main.Params["stopLossPrice"])
 	}
-
-	var stop, tp *OrderRequest
-	for i := range triggers {
-		trigger := &triggers[i]
-		if !trigger.IsTrigger {
-			t.Errorf("expected trigger order to have IsTrigger=true")
-		}
-		if trigger.Type != "limit" {
-			t.Errorf("expected trigger order type 'limit', got %s", trigger.Type)
-		}
-		if trigger.Side != OrderSideSell {
-			t.Errorf("expected trigger order side sell, got %s", trigger.Side)
-		}
-		if !trigger.ReduceOnly {
-			t.Errorf("expected trigger order reduceOnly=true")
-		}
-		if trigger.Params["reduceOnly"] != true {
-			t.Errorf("expected trigger params reduceOnly=true, got %v", trigger.Params)
-		}
-
-		switch trigger.TriggerType {
-		case "stop_loss":
-			stop = trigger
-		case "take_profit":
-			tp = trigger
-		default:
-			t.Errorf("unexpected trigger type: %s", trigger.TriggerType)
-		}
+	if main.Params["takeProfitPrice"] != float64(52000) {
+		t.Errorf("expected takeProfitPrice=52000, got %v", main.Params["takeProfitPrice"])
 	}
-
-	if stop == nil || stop.TriggerPrice != 45000 {
-		t.Errorf("unexpected stop-loss configuration: %+v", stop)
+	if tif := main.Params["timeInForce"]; tif != "gtc" {
+		t.Errorf("expected timeInForce=gtc, got %v", tif)
 	}
-	if tp == nil || tp.TriggerPrice != 52000 {
-		t.Errorf("unexpected take-profit configuration: %+v", tp)
+	if !main.IsTrigger {
+		t.Errorf("expected IsTrigger=true when stop/take present")
 	}
 }
 
@@ -96,16 +67,16 @@ func TestExecutorExecute_SubmitsOrdersInSequence(t *testing.T) {
 	plan.TargetExposure = 0.10
 	plan.MarketPrice = 50000
 	plan.Account.TotalEquity = 100000
-	plan.Decision.NewStopLoss = "45000"
-	plan.Decision.NewTakeProfit = "52000"
+	plan.StopLoss = 45000
+	plan.TakeProfit = 52000
 
-	orders, err := buildOrderRequests(plan, 0.01)
+	orders, err := buildOrderRequests(plan, Options{Slippage: 0.01, TimeInForce: "IOC"})
 	if err != nil {
 		t.Fatalf("buildOrderRequests returned error: %v", err)
 	}
 
 	mockClient := &mockOrderClient{}
-	exec := NewExecutor(mockClient, plan.Symbol, 0.01, nil)
+	exec := NewExecutor(mockClient, plan.Symbol, Options{Slippage: 0.01, TimeInForce: "IOC"}, nil)
 	result, err := exec.Execute(context.Background(), orders)
 	if err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -114,7 +85,7 @@ func TestExecutorExecute_SubmitsOrdersInSequence(t *testing.T) {
 		t.Fatalf("expected result.Executed=true")
 	}
 
-	expected := []string{"CreateMarketOrder", "CreateOrder", "CreateOrder"}
+	expected := []string{"CreateMarketOrder"}
 	if len(mockClient.calls) != len(expected) {
 		t.Fatalf("unexpected call count: got %d want %d", len(mockClient.calls), len(expected))
 	}
@@ -129,7 +100,7 @@ func TestBuildOrderRequests_Errors(t *testing.T) {
 	plan := makeBasePlan()
 	plan.RiskResult.Status = risk.StatusDeny
 
-	if _, err := buildOrderRequests(plan, 0.01); err == nil || !strings.Contains(err.Error(), "风控未允许") {
+	if _, err := buildOrderRequests(plan, Options{Slippage: 0.01}); err == nil || !strings.Contains(err.Error(), "风控未允许") {
 		t.Fatalf("expected risk denial error, got %v", err)
 	}
 
@@ -138,7 +109,7 @@ func TestBuildOrderRequests_Errors(t *testing.T) {
 	plan.MarketPrice = 50000
 	plan.Account.TotalEquity = 100000
 
-	if _, err := buildOrderRequests(plan, 0.01); err == nil || !strings.Contains(err.Error(), "目标仓位与当前仓位一致") {
+	if _, err := buildOrderRequests(plan, Options{Slippage: 0.01}); err == nil || !strings.Contains(err.Error(), "目标仓位与当前仓位一致") {
 		t.Fatalf("expected no-op error, got %v", err)
 	}
 }
@@ -150,6 +121,8 @@ func makeBasePlan() ExecutionPlan {
 		CurrentExposure: 0,
 		TargetExposure:  0.05,
 		MarketPrice:     50000,
+		StopLoss:        0,
+		TakeProfit:      0,
 		Account: position.AccountBalance{
 			TotalEquity: 100000,
 			TotalUSD:    100000,

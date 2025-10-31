@@ -39,6 +39,7 @@ func Load(path string) (Config, error) {
 
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("app.environment", "development")
+	v.SetDefault("app.monitor_port", 8080)
 
 	v.SetDefault("exchange.name", "binanceusdm")
 	v.SetDefault("exchange.markets", []string{"BTC/USDT:USDT"})
@@ -68,7 +69,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("risk.daily_loss_reset_hour", 0)
 	v.SetDefault("risk.enable_daily_stop_loss", true)
 
+	v.SetDefault("execution.simulation", false)
 	v.SetDefault("execution.slippage", 0.01)
+	v.SetDefault("execution.time_in_force", "GTC")
+	v.SetDefault("execution.post_only", false)
 
 	v.SetDefault("database.path", "data/trades_ai.db")
 	v.SetDefault("database.max_open_conns", 4)

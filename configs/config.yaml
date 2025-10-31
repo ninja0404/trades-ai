@@ -1,5 +1,6 @@
 app:
   environment: development
+  monitor_port: 8080
 
 exchange:
   name: binanceusdm
@@ -47,7 +48,10 @@ risk:
   enable_daily_stop_loss: true
 
 execution:
+  simulation: false
   slippage: 0.01
+  time_in_force: GTC
+  post_only: false
 
 database:
   path: data/trades_ai.db

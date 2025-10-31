@@ -25,6 +25,7 @@ type Config struct {
 // AppConfig 控制应用级参数。
 type AppConfig struct {
 	Environment string `mapstructure:"environment"`
+	MonitorPort int    `mapstructure:"monitor_port"`
 }
 
 // ExchangeConfig 描述交易所连接信息。
@@ -78,7 +79,10 @@ type RiskConfig struct {
 
 // ExecutionConfig 控制下单行为。
 type ExecutionConfig struct {
-	Slippage float64 `mapstructure:"slippage"`
+	Simulation  bool    `mapstructure:"simulation"`
+	Slippage    float64 `mapstructure:"slippage"`
+	TimeInForce string  `mapstructure:"time_in_force"`
+	PostOnly    bool    `mapstructure:"post_only"`
 }
 
 // DatabaseConfig 管理数据库连接。
@@ -112,6 +116,9 @@ func (c *Config) Validate() error {
 
 	if c.App.Environment == "" {
 		err = multierr.Append(err, errors.New("app.environment 不能为空"))
+	}
+	if c.App.MonitorPort <= 0 || c.App.MonitorPort > 65535 {
+		err = multierr.Append(err, errors.New("app.monitor_port 必须位于 (0, 65535]"))
 	}
 	if c.Exchange.Name == "" {
 		err = multierr.Append(err, errors.New("exchange.name 不能为空"))

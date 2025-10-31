@@ -43,6 +43,10 @@ type orchestrator struct {
 	lastDecision     time.Time
 }
 
+func (o *orchestrator) Monitor() *monitor.Service {
+	return o.monitor
+}
+
 type orchestratorConfig struct {
 	exchange  config.ExchangeConfig
 	trade     config.TradeExchangeConfig
@@ -81,6 +85,12 @@ func newOrchestrator(cfg orchestratorConfig, logger *zap.Logger, store *store.St
 		return nil, fmt.Errorf("交易所与执行市场数量不一致: %d vs %d", len(cfg.exchange.Markets), len(cfg.trade.Markets))
 	}
 
+	execOpts := execution.Options{
+		Slippage:    cfg.execution.Slippage,
+		TimeInForce: cfg.execution.TimeInForce,
+		PostOnly:    cfg.execution.PostOnly,
+	}
+
 	assets := make([]assetPipeline, 0, len(cfg.exchange.Markets))
 	for i, exSymbol := range cfg.exchange.Markets {
 		tradeSymbol := cfg.trade.Markets[i]
@@ -95,7 +105,14 @@ func newOrchestrator(cfg orchestratorConfig, logger *zap.Logger, store *store.St
 		indicatorCalc := indicator.NewCalculator()
 		extractor := feature.NewExtractor(indicatorCalc, logger)
 		posMgr := position.NewManager(tradeClient, tradeSymbol, logger)
-		exec := execution.NewExecutor(tradeClient, tradeSymbol, cfg.execution.Slippage, logger)
+
+		var trader execution.Trader
+		if cfg.execution.Simulation {
+			logger.Info("执行器处于模拟模式", zap.String("symbol", tradeSymbol))
+			trader = execution.NewSimulatedExecutor(tradeSymbol, execOpts, logger)
+		} else {
+			trader = execution.NewExecutor(tradeClient, tradeSymbol, execOpts, logger)
+		}
 
 		assets = append(assets, assetPipeline{
 			assetKey:       assetKey,
@@ -104,7 +121,7 @@ func newOrchestrator(cfg orchestratorConfig, logger *zap.Logger, store *store.St
 			market:         marketSvc,
 			extractor:      extractor,
 			positionMgr:    posMgr,
-			executor:       exec,
+			executor:       trader,
 		})
 	}
 
@@ -265,6 +282,8 @@ func (o *orchestrator) Tick(ctx context.Context) error {
 			CurrentExposure: account.CurrentExposurePercent,
 			TargetExposure:  evaluation.TargetExposurePercent,
 			MarketPrice:     state.price,
+			StopLoss:        evaluation.RecommendedStopLoss,
+			TakeProfit:      evaluation.RecommendedTakeProfit,
 			RiskAmount:      evaluation.RiskAmount,
 			Decision:        decision,
 			RiskResult:      evaluation,
