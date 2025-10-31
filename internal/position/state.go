@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -280,7 +281,7 @@ func derefFloat(v *float64) float64 {
 	if v == nil {
 		return 0
 	}
-	return *v
+	return sanitizeFloat(*v)
 }
 
 func derefString(v *string) string {
@@ -295,13 +296,13 @@ func parseNumeric(value interface{}) float64 {
 	case nil:
 		return 0
 	case float64:
-		return v
+		return sanitizeFloat(v)
 	case *float64:
 		if v != nil {
-			return *v
+			return sanitizeFloat(*v)
 		}
 	case float32:
-		return float64(v)
+		return sanitizeFloat(float64(v))
 	case int:
 		return float64(v)
 	case int64:
@@ -326,7 +327,7 @@ func parseNumeric(value interface{}) float64 {
 			return 0
 		}
 		if f, err := strconv.ParseFloat(s, 64); err == nil {
-			return f
+			return sanitizeFloat(f)
 		}
 	case fmt.Stringer:
 		s := strings.TrimSpace(v.String())
@@ -334,18 +335,25 @@ func parseNumeric(value interface{}) float64 {
 			return 0
 		}
 		if f, err := strconv.ParseFloat(s, 64); err == nil {
-			return f
+			return sanitizeFloat(f)
 		}
 	case json.Number:
 		if f, err := v.Float64(); err == nil {
-			return f
+			return sanitizeFloat(f)
 		}
 	case *json.Number:
 		if v != nil {
 			if f, err := v.Float64(); err == nil {
-				return f
+				return sanitizeFloat(f)
 			}
 		}
 	}
 	return 0
+}
+
+func sanitizeFloat(v float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0
+	}
+	return v
 }
