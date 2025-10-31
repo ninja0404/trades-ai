@@ -39,6 +39,8 @@ type MarketSnapshot struct {
 	Symbol      string
 	Candles1H   []Candle
 	Candles4H   []Candle
+	Candles15M  []Candle
+	Candles1D   []Candle
 	OrderBook   OrderBookSnapshot
 	RetrievedAt time.Time
 }
@@ -47,6 +49,8 @@ type MarketSnapshot struct {
 type SnapshotRequest struct {
 	Limit1H        int
 	Limit4H        int
+	Limit15M       int
+	Limit1D        int
 	OrderBookDepth int
 }
 
@@ -55,6 +59,8 @@ func DefaultSnapshotRequest() SnapshotRequest {
 	return SnapshotRequest{
 		Limit1H:        200,
 		Limit4H:        200,
+		Limit15M:       200,
+		Limit1D:        200,
 		OrderBookDepth: 100,
 	}
 }

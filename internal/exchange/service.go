@@ -34,14 +34,22 @@ func (s *MarketDataService) GetSnapshot(ctx context.Context, req SnapshotRequest
 	if req.Limit4H <= 0 {
 		req.Limit4H = defaultReq.Limit4H
 	}
+	if req.Limit15M <= 0 {
+		req.Limit15M = defaultReq.Limit15M
+	}
+	if req.Limit1D <= 0 {
+		req.Limit1D = defaultReq.Limit1D
+	}
 	if req.OrderBookDepth <= 0 {
 		req.OrderBookDepth = defaultReq.OrderBookDepth
 	}
 
 	var (
-		candles1H []Candle
-		candles4H []Candle
-		orderBook OrderBookSnapshot
+		candles1H  []Candle
+		candles4H  []Candle
+		candles15M []Candle
+		candles1D  []Candle
+		orderBook  OrderBookSnapshot
 	)
 
 	group, groupCtx := errgroup.WithContext(ctx)
@@ -65,6 +73,24 @@ func (s *MarketDataService) GetSnapshot(ctx context.Context, req SnapshotRequest
 	})
 
 	group.Go(func() error {
+		data, err := s.client.FetchCandles(groupCtx, "15m", int64(req.Limit15M))
+		if err != nil {
+			return err
+		}
+		candles15M = data
+		return nil
+	})
+
+	group.Go(func() error {
+		data, err := s.client.FetchCandles(groupCtx, "1d", int64(req.Limit1D))
+		if err != nil {
+			return err
+		}
+		candles1D = data
+		return nil
+	})
+
+	group.Go(func() error {
 		book, err := s.client.FetchOrderBook(groupCtx, int64(req.OrderBookDepth))
 		if err != nil {
 			return err
@@ -81,6 +107,8 @@ func (s *MarketDataService) GetSnapshot(ctx context.Context, req SnapshotRequest
 		Symbol:      s.client.Symbol(),
 		Candles1H:   candles1H,
 		Candles4H:   candles4H,
+		Candles15M:  candles15M,
+		Candles1D:   candles1D,
 		OrderBook:   orderBook,
 		RetrievedAt: time.Now().UTC(),
 	}

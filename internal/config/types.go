@@ -30,7 +30,7 @@ type AppConfig struct {
 // ExchangeConfig 描述交易所连接信息。
 type ExchangeConfig struct {
 	Name       string      `mapstructure:"name"`
-	Market     string      `mapstructure:"market"`
+	Markets    []string    `mapstructure:"markets"`
 	APIKey     string      `mapstructure:"api_key"`
 	APISecret  string      `mapstructure:"api_secret"`
 	APIPass    string      `mapstructure:"api_password"`
@@ -40,14 +40,14 @@ type ExchangeConfig struct {
 
 // TradeExchangeConfig 描述执行端交易所配置。
 type TradeExchangeConfig struct {
-	Name       string `mapstructure:"name"`
-	Market     string `mapstructure:"market"`
-	APIKey     string `mapstructure:"api_key"`
-	APISecret  string `mapstructure:"api_secret"`
-	APIPass    string `mapstructure:"api_password"`
-	UseSandbox bool   `mapstructure:"use_sandbox"`
-	Wallet     string `mapstructure:"wallet_address"`
-	PrivateKey string `mapstructure:"private_key"`
+	Name       string   `mapstructure:"name"`
+	Markets    []string `mapstructure:"markets"`
+	APIKey     string   `mapstructure:"api_key"`
+	APISecret  string   `mapstructure:"api_secret"`
+	APIPass    string   `mapstructure:"api_password"`
+	UseSandbox bool     `mapstructure:"use_sandbox"`
+	Wallet     string   `mapstructure:"wallet_address"`
+	PrivateKey string   `mapstructure:"private_key"`
 }
 
 // RetryConfig 统一控制重试机制。
@@ -116,8 +116,8 @@ func (c *Config) Validate() error {
 	if c.Exchange.Name == "" {
 		err = multierr.Append(err, errors.New("exchange.name 不能为空"))
 	}
-	if c.Exchange.Market == "" {
-		err = multierr.Append(err, errors.New("exchange.market 不能为空"))
+	if len(c.Exchange.Markets) == 0 {
+		err = multierr.Append(err, errors.New("exchange.markets 至少包含一个交易对"))
 	}
 	if c.Exchange.Retry.MaxAttempts <= 0 {
 		err = multierr.Append(err, errors.New("exchange.retry.max_attempts 必须大于0"))
@@ -158,14 +158,8 @@ func (c *Config) Validate() error {
 	if c.Risk.EnableDailyStopLoss && (c.Risk.DailyLossResetHour < 0 || c.Risk.DailyLossResetHour > 23) {
 		err = multierr.Append(err, errors.New("risk.daily_loss_reset_hour 必须位于[0,23]"))
 	}
-	if c.Execution.Slippage < 0 || c.Execution.Slippage > 0.2 {
-		err = multierr.Append(err, errors.New("execution.slippage 应位于[0,0.2]"))
-	}
-	if c.Trade.Name == "" {
-		err = multierr.Append(err, errors.New("trade_exchange.name 不能为空"))
-	}
-	if c.Trade.Market == "" {
-		err = multierr.Append(err, errors.New("trade_exchange.market 不能为空"))
+	if len(c.Trade.Markets) == 0 {
+		err = multierr.Append(err, errors.New("trade_exchange.markets 至少包含一个交易对"))
 	}
 	if strings.EqualFold(c.Trade.Name, "hyperliquid") {
 		if c.Trade.Wallet == "" || c.Trade.PrivateKey == "" {
@@ -211,8 +205,9 @@ func (c *Config) Validate() error {
 	if c.Scheduler.TrendInterval < c.Scheduler.DecisionInterval {
 		err = multierr.Append(err, errors.New("scheduler.trend_interval 不应小于 decision_interval"))
 	}
-	if c.Trade.Name == "" {
-		err = multierr.Append(err, errors.New("trade_exchange.name 不能为空"))
+
+	if len(c.Exchange.Markets) != len(c.Trade.Markets) {
+		err = multierr.Append(err, fmt.Errorf("exchange.markets 与 trade_exchange.markets 数量不一致: %d vs %d", len(c.Exchange.Markets), len(c.Trade.Markets)))
 	}
 
 	if err != nil {

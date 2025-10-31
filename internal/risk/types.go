@@ -27,6 +27,7 @@ type AccountState struct {
 
 // EvaluationInput 为风险评估输入。
 type EvaluationInput struct {
+	Symbol      string
 	Decision    ai.Decision
 	Features    feature.FeatureSet
 	Position    position.Summary
@@ -45,6 +46,7 @@ type DailyStatus struct {
 
 // EvaluationResult 为风险评估输出。
 type EvaluationResult struct {
+	Symbol                string
 	Status                StatusType
 	TargetExposurePercent float64
 	RecommendedStopLoss   float64

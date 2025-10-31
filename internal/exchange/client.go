@@ -27,7 +27,7 @@ type Client struct {
 }
 
 // NewClient 构造 Binance USDⓈ-M 客户端。
-func NewClient(cfg config.ExchangeConfig, logger *zap.Logger) (*Client, error) {
+func NewClient(cfg config.ExchangeConfig, symbol string, logger *zap.Logger) (*Client, error) {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
@@ -59,7 +59,7 @@ func NewClient(cfg config.ExchangeConfig, logger *zap.Logger) (*Client, error) {
 		cfg:      cfg,
 		logger:   logger,
 		exchange: ex,
-		symbol:   cfg.Market,
+		symbol:   symbol,
 	}, nil
 }
 

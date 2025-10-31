@@ -13,8 +13,6 @@ import (
 	"go.uber.org/zap"
 
 	"trades-ai/internal/config"
-	"trades-ai/internal/feature"
-	"trades-ai/internal/position"
 )
 
 // Client 封装 OpenAI 调用逻辑。
@@ -55,14 +53,14 @@ func NewClient(cfg config.OpenAIConfig, logger *zap.Logger) (*Client, error) {
 }
 
 // GenerateDecision 根据特征与仓位信息获取模型决策。
-func (c *Client) GenerateDecision(ctx context.Context, features feature.FeatureSet, pos position.Summary) (Decision, error) {
+func (c *Client) GenerateDecision(ctx context.Context, assets []AssetInput, account AccountSnapshot) ([]Decision, error) {
 	if c.cfg.Model == "" {
-		return Decision{}, errors.New("openai model 不能为空")
+		return nil, errors.New("openai model 不能为空")
 	}
 
-	prompt, err := BuildPrompt(features, pos)
+	prompt, err := BuildPrompt(assets, account)
 	if err != nil {
-		return Decision{}, err
+		return nil, err
 	}
 
 	response, err := c.sdk.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
@@ -77,53 +75,57 @@ func (c *Client) GenerateDecision(ctx context.Context, features feature.FeatureS
 	})
 	if err != nil {
 		c.logger.Error("调用OpenAI失败", zap.Error(err))
-		return Decision{}, fmt.Errorf("调用OpenAI失败: %w", err)
+		return nil, fmt.Errorf("调用OpenAI失败: %w", err)
 	}
 
 	if len(response.Choices) == 0 {
-		return Decision{}, errors.New("OpenAI 返回结果为空")
+		return nil, errors.New("OpenAI 返回结果为空")
 	}
 
 	rawContent := strings.TrimSpace(response.Choices[0].Message.Content)
 	if rawContent == "" {
-		return Decision{}, errors.New("OpenAI 返回内容为空")
+		return nil, errors.New("OpenAI 返回内容为空")
 	}
 
-	decision, err := parseDecision(rawContent)
+	decisions, err := parseDecision(rawContent)
 	if err != nil {
 		c.logger.Error("解析模型决策失败",
 			zap.Error(err),
 			zap.String("raw_content", rawContent),
 		)
-		return Decision{}, err
+		return nil, err
 	}
 
-	if err := decision.Validate(); err != nil {
-		return Decision{}, err
+	for _, decision := range decisions {
+		if err = decision.Validate(); err != nil {
+			return nil, err
+		}
+		c.logger.Info("AI 决策生成成功",
+			zap.String("asset", decision.Symbol),
+			zap.String("intent", decision.Intent),
+			zap.String("direction", decision.Direction),
+			zap.Float64("target_exposure_pct", decision.TargetExposurePct),
+			zap.Float64("confidence", decision.Confidence),
+		)
 	}
 
-	c.logger.Info("AI 决策生成成功",
-		zap.String("intent", decision.Intent),
-		zap.String("direction", decision.Direction),
-		zap.Float64("target_exposure_pct", decision.TargetExposurePct),
-		zap.Float64("confidence", decision.Confidence),
-	)
-
-	return decision, nil
+	return decisions, nil
 }
 
-func parseDecision(content string) (Decision, error) {
+func parseDecision(content string) ([]Decision, error) {
 	jsonPayload, err := extractJSON(content)
 	if err != nil {
-		return Decision{}, err
+		return nil, err
 	}
 
-	var decision Decision
-	if err = json.Unmarshal(jsonPayload, &decision); err != nil {
-		return Decision{}, fmt.Errorf("解析决策JSON失败: %w", err)
+	var envelope DecisionEnvelope
+	if err = json.Unmarshal(jsonPayload, &envelope); err != nil {
+		return nil, fmt.Errorf("解析决策JSON失败: %w", err)
 	}
-
-	return decision, nil
+	if len(envelope.Decisions) == 0 {
+		return nil, errors.New("AI 返回的 decisions 为空")
+	}
+	return envelope.Decisions, nil
 }
 
 func extractJSON(content string) ([]byte, error) {

@@ -19,6 +19,7 @@ const (
 
 // TrendFeatures 描述趋势相关指标。
 type TrendFeatures struct {
+	Timeframe            string
 	EMA12                float64
 	EMA26                float64
 	EMA50                float64
@@ -40,6 +41,7 @@ type TrendFeatures struct {
 
 // MomentumFeatures 描述动量相关指标。
 type MomentumFeatures struct {
+	Timeframe        string
 	RSIValue         float64
 	RSIState         string
 	VolumeRatio      float64
@@ -49,6 +51,7 @@ type MomentumFeatures struct {
 
 // VolatilityFeatures 描述波动率状况。
 type VolatilityFeatures struct {
+	Timeframe            string
 	ATRAbsolute          float64
 	ATRRelative          float64
 	RecentVolatility     float64
@@ -58,6 +61,7 @@ type VolatilityFeatures struct {
 
 // MarketStructureFeatures 描述市场结构。
 type MarketStructureFeatures struct {
+	Timeframe          string
 	SupportLevel       float64
 	ResistanceLevel    float64
 	PriceRange         float64
@@ -68,9 +72,50 @@ type MarketStructureFeatures struct {
 
 // MarketStateFeatures 描述整体市场状态。
 type MarketStateFeatures struct {
+	Timeframe      string
 	ADXValue       float64
 	TrendStrength  string
 	TradingSession string
+}
+
+// OpenInterestAnalysis 描述合约持仓与资金费率信息。
+type OpenInterestAnalysis struct {
+	OpenInterest      float64
+	OIChange24H       float64
+	FundingRate       float64
+	OIPriceDivergence string
+}
+
+// VolumeProfileFeatures 描述成交量分布情况。
+type VolumeProfileFeatures struct {
+	ValueAreaHigh  float64
+	ValueAreaLow   float64
+	PointOfControl float64
+	VolumeGap      [2]float64
+}
+
+// MultiTimeframeMomentum 描述多周期动量状态。
+type MultiTimeframeMomentum struct {
+	MTFRSI  map[string]float64
+	MTFMACD map[string]string
+}
+
+// CompositeSentiment 描述市场情绪综合指标。
+type CompositeSentiment struct {
+	FearGreedIndex    float64
+	SocialDominance   float64
+	WeightedSentiment float64
+	MarketRegime      string
+}
+
+// LiquidityAnalysis 描述流动性分布与潜在缺口。
+type LiquidityAnalysis struct {
+	LiquidityZones struct {
+		AboveMarket [2]float64
+		BelowMarket [2]float64
+	}
+	LiquidityGrab bool
+	FairValueGap  [2]float64
 }
 
 // FeatureSet 汇总全部特征，用于后续提示词拼装。
@@ -82,6 +127,11 @@ type FeatureSet struct {
 	Volatility      VolatilityFeatures
 	MarketStructure MarketStructureFeatures
 	MarketState     MarketStateFeatures
+	OpenInterest    OpenInterestAnalysis
+	VolumeProfile   VolumeProfileFeatures
+	MultiMomentum   MultiTimeframeMomentum
+	Composite       CompositeSentiment
+	Liquidity       LiquidityAnalysis
 }
 
 // Extractor 根据市场快照提取特征。
@@ -134,6 +184,11 @@ func (e *Extractor) Extract(ctx context.Context, snapshot exchange.MarketSnapsho
 	volatility := e.buildVolatilityFeatures(res1h)
 	structure := e.buildMarketStructureFeatures(res1h, snapshot.OrderBook)
 	state := e.buildMarketStateFeatures(res1h, snapshot.RetrievedAt)
+	openInterest := e.buildOpenInterestFeatures(snapshot, res1h)
+	volumeProfile := e.buildVolumeProfileFeatures(snapshot)
+	multiMomentum := e.buildMultiTimeframeMomentum(ctx, snapshot)
+	composite := e.buildCompositeSentiment(trend, momentum, volatility, multiMomentum)
+	liquidity := e.buildLiquidityFeatures(snapshot, structure, volumeProfile)
 
 	features := FeatureSet{
 		Symbol:          snapshot.Symbol,
@@ -143,6 +198,11 @@ func (e *Extractor) Extract(ctx context.Context, snapshot exchange.MarketSnapsho
 		Volatility:      volatility,
 		MarketStructure: structure,
 		MarketState:     state,
+		OpenInterest:    openInterest,
+		VolumeProfile:   volumeProfile,
+		MultiMomentum:   multiMomentum,
+		Composite:       composite,
+		Liquidity:       liquidity,
 	}
 
 	e.logger.Debug("特征提取完成",
@@ -166,6 +226,7 @@ func (e *Extractor) buildTrendFeatures(res1h, res4h indicator.Result) TrendFeatu
 	macdChange := clean(res1h.MACD.Histogram - res1h.MACD.PrevHistogram)
 
 	return TrendFeatures{
+		Timeframe:            string(exchange.Timeframe1h),
 		EMA12:                clean(res1h.EMA12),
 		EMA26:                clean(res1h.EMA26),
 		EMA50:                clean(res1h.EMA50),
@@ -190,6 +251,7 @@ func (e *Extractor) buildMomentumFeatures(res indicator.Result) MomentumFeatures
 	divergence := determineVolumeDivergence(res)
 
 	return MomentumFeatures{
+		Timeframe:        res.Timeframe,
 		RSIValue:         clean(res.RSI),
 		RSIState:         determineRSIState(res.RSI),
 		VolumeRatio:      clean(res.Volume.Ratio),
@@ -202,6 +264,7 @@ func (e *Extractor) buildVolatilityFeatures(res indicator.Result) VolatilityFeat
 	recentVol, historicalVol, ratio := computeVolatilityRatios(res.Series.Close)
 
 	return VolatilityFeatures{
+		Timeframe:            string(res.Timeframe),
 		ATRAbsolute:          clean(res.ATR.Absolute),
 		ATRRelative:          clean(res.ATR.Relative),
 		RecentVolatility:     clean(recentVol),
@@ -218,6 +281,7 @@ func (e *Extractor) buildMarketStructureFeatures(res indicator.Result, orderBook
 	spread := computeBidAskSpread(orderBook)
 
 	return MarketStructureFeatures{
+		Timeframe:          string(res.Timeframe),
 		SupportLevel:       clean(support),
 		ResistanceLevel:    clean(resistance),
 		PriceRange:         priceRange,
@@ -229,6 +293,7 @@ func (e *Extractor) buildMarketStructureFeatures(res indicator.Result, orderBook
 
 func (e *Extractor) buildMarketStateFeatures(res indicator.Result, ts time.Time) MarketStateFeatures {
 	return MarketStateFeatures{
+		Timeframe:      string(res.Timeframe),
 		ADXValue:       clean(res.ADX),
 		TrendStrength:  determineTrendStrength(res.ADX),
 		TradingSession: determineTradingSession(ts),
@@ -426,6 +491,360 @@ func computeBidAskSpread(orderBook exchange.OrderBookSnapshot) float64 {
 	bestBid := orderBook.Bids[0].Price
 	bestAsk := orderBook.Asks[0].Price
 	return clean(bestAsk - bestBid)
+}
+
+func (e *Extractor) buildOpenInterestFeatures(snapshot exchange.MarketSnapshot, res1h indicator.Result) OpenInterestAnalysis {
+	candles := snapshot.Candles4H
+	if len(candles) == 0 {
+		return OpenInterestAnalysis{}
+	}
+
+	window := min(12, len(candles))
+	half := window / 2
+	var currentSum, previousSum float64
+	for i := len(candles) - window; i < len(candles); i++ {
+		if i < 0 {
+			continue
+		}
+		vol := candles[i].Volume
+		notional := vol * candles[i].Close
+		if i >= len(candles)-half {
+			currentSum += notional
+		} else {
+			previousSum += notional
+		}
+	}
+
+	openInterest := currentSum
+	var oiChange float64
+	if previousSum > 0 {
+		oiChange = (currentSum - previousSum) / previousSum
+	}
+
+	priceChange := clean(res1h.Close - res1h.PreviousClose)
+	divergence := "neutral"
+	if oiChange > 0.02 {
+		if math.Abs(priceChange) < res1h.Close*0.002 {
+			divergence = "bullish"
+		} else if priceChange < 0 {
+			divergence = "short_squeeze"
+		}
+	} else if oiChange < -0.02 {
+		if priceChange > 0 {
+			divergence = "longs_closing"
+		} else {
+			divergence = "bearish"
+		}
+	}
+
+	fundingRate := indicator.SafeDivide(res1h.Close-res1h.EMA26, res1h.EMA26) / 24
+
+	return OpenInterestAnalysis{
+		OpenInterest:      clean(openInterest),
+		OIChange24H:       clean(oiChange),
+		FundingRate:       clean(fundingRate),
+		OIPriceDivergence: divergence,
+	}
+}
+
+func (e *Extractor) buildVolumeProfileFeatures(snapshot exchange.MarketSnapshot) VolumeProfileFeatures {
+	candles := snapshot.Candles1H
+	if len(candles) == 0 {
+		return VolumeProfileFeatures{}
+	}
+
+	lookback := min(72, len(candles))
+	recent := candles[len(candles)-lookback:]
+
+	var minPrice, maxPrice float64
+	minPrice = recent[0].Low
+	maxPrice = recent[0].High
+	for _, c := range recent {
+		if c.Low < minPrice {
+			minPrice = c.Low
+		}
+		if c.High > maxPrice {
+			maxPrice = c.High
+		}
+	}
+
+	if maxPrice <= minPrice {
+		return VolumeProfileFeatures{}
+	}
+
+	bins := 40
+	step := (maxPrice - minPrice) / float64(bins)
+	if step <= 0 {
+		step = maxPrice * 0.0001
+	}
+
+	type bucket struct {
+		lower  float64
+		upper  float64
+		volume float64
+	}
+
+	distribution := make([]bucket, bins)
+	for i := 0; i < bins; i++ {
+		distribution[i] = bucket{
+			lower: minPrice + float64(i)*step,
+			upper: minPrice + float64(i+1)*step,
+		}
+	}
+
+	for _, c := range recent {
+		typical := (c.High + c.Low + c.Close) / 3
+		idx := int(math.Floor((typical - minPrice) / step))
+		if idx < 0 {
+			idx = 0
+		}
+		if idx >= bins {
+			idx = bins - 1
+		}
+		distribution[idx].volume += c.Volume
+	}
+
+	var totalVolume float64
+	var poc bucket
+	for _, b := range distribution {
+		totalVolume += b.volume
+		if b.volume > poc.volume {
+			poc = b
+		}
+	}
+
+	targetVolume := totalVolume * 0.7
+	cumulative := poc.volume
+	lowerIdx := -1
+	upperIdx := -1
+	for i, b := range distribution {
+		if b.lower == poc.lower {
+			lowerIdx = i
+			upperIdx = i
+			break
+		}
+	}
+
+	left := lowerIdx - 1
+	right := upperIdx + 1
+	for cumulative < targetVolume && (left >= 0 || right < bins) {
+		leftVolume := 0.0
+		if left >= 0 {
+			leftVolume = distribution[left].volume
+		}
+		rightVolume := 0.0
+		if right < bins {
+			rightVolume = distribution[right].volume
+		}
+
+		if leftVolume >= rightVolume {
+			if left >= 0 {
+				cumulative += leftVolume
+				lowerIdx = left
+				left--
+			} else if right < bins {
+				cumulative += rightVolume
+				upperIdx = right
+				right++
+			} else {
+				break
+			}
+		} else {
+			if right < bins {
+				cumulative += rightVolume
+				upperIdx = right
+				right++
+			} else if left >= 0 {
+				cumulative += leftVolume
+				lowerIdx = left
+				left--
+			} else {
+				break
+			}
+		}
+	}
+
+	gap := [2]float64{0, 0}
+	threshold := poc.volume * 0.1
+	currentGap := [2]float64{0, 0}
+	longestGapSize := 0.0
+	inGap := false
+	for _, b := range distribution {
+		if b.volume < threshold {
+			if !inGap {
+				currentGap = [2]float64{b.lower, b.upper}
+				inGap = true
+			} else {
+				currentGap[1] = b.upper
+			}
+			size := currentGap[1] - currentGap[0]
+			if size > longestGapSize {
+				longestGapSize = size
+				gap = currentGap
+			}
+		} else {
+			inGap = false
+		}
+	}
+
+	return VolumeProfileFeatures{
+		ValueAreaHigh:  distribution[upperIdx].upper,
+		ValueAreaLow:   distribution[lowerIdx].lower,
+		PointOfControl: (poc.lower + poc.upper) / 2,
+		VolumeGap:      gap,
+	}
+}
+
+func (e *Extractor) buildMultiTimeframeMomentum(ctx context.Context, snapshot exchange.MarketSnapshot) MultiTimeframeMomentum {
+	_ = ctx
+	result := MultiTimeframeMomentum{
+		MTFRSI:  make(map[string]float64, 4),
+		MTFMACD: make(map[string]string, 2),
+	}
+
+	computeRSI := func(timeframe string, candles []exchange.Candle) {
+		if len(candles) == 0 {
+			return
+		}
+		res, err := e.indicators.Compute(timeframe, candles)
+		if err != nil {
+			e.logger.Debug("计算多周期指标失败", zap.String("timeframe", timeframe), zap.Error(err))
+			return
+		}
+		result.MTFRSI[timeframe] = clean(res.RSI)
+		trend := trendDescriptor(res.MACD.Histogram, res.MACD.PrevHistogram)
+		key := fmt.Sprintf("%s_histogram_trend", timeframe)
+		result.MTFMACD[key] = trend
+	}
+
+	computeRSI("15m", snapshot.Candles15M)
+	res1h, err := e.indicators.Compute(exchange.Timeframe1h, snapshot.Candles1H)
+	if err == nil {
+		result.MTFRSI["1h"] = clean(res1h.RSI)
+		result.MTFMACD["1h_histogram_trend"] = trendDescriptor(res1h.MACD.Histogram, res1h.MACD.PrevHistogram)
+	}
+	res4h, err := e.indicators.Compute(exchange.Timeframe4h, snapshot.Candles4H)
+	if err == nil {
+		result.MTFRSI["4h"] = clean(res4h.RSI)
+		result.MTFMACD["4h_histogram_trend"] = trendDescriptor(res4h.MACD.Histogram, res4h.MACD.PrevHistogram)
+	}
+	computeRSI("1d", snapshot.Candles1D)
+
+	return result
+}
+
+func trendDescriptor(current, previous float64) string {
+	delta := clean(current - previous)
+	switch {
+	case delta > 0.05:
+		return "improving"
+	case delta < -0.05:
+		return "deteriorating"
+	default:
+		return "stable"
+	}
+}
+
+func (e *Extractor) buildCompositeSentiment(trend TrendFeatures, momentum MomentumFeatures, volatility VolatilityFeatures, mtf MultiTimeframeMomentum) CompositeSentiment {
+	fearGreed := clamp((trend.BollingerPosition*50)+clean(momentum.RSIValue/2), 0, 100)
+
+	dominance := clamp(momentum.VolumeRatio*10, 0, 100)
+	weighted := clamp((trend.DistanceToEMA12*50)+(volatility.ATRRelative*100), -1, 1)
+
+	regime := "balanced"
+	adx := volatility.RecentVolatility
+	switch {
+	case adx < 0.5 && trend.BollingerBandwidth < 0.01:
+		regime = "low_volatility_accumulation"
+	case volatility.ATRRelative > 0.02:
+		regime = "high_volatility_breakout"
+	case trend.HigherTimeframeTrend == "bullish" && trend.MACDHistogram > 0:
+		regime = "uptrend"
+	case trend.HigherTimeframeTrend == "bearish" && trend.MACDHistogram < 0:
+		regime = "downtrend"
+	}
+
+	if _, ok := mtf.MTFRSI["1h"]; ok {
+		fearGreed = clamp((fearGreed+mtf.MTFRSI["1h"])/2, 0, 100)
+	}
+
+	return CompositeSentiment{
+		FearGreedIndex:    clean(fearGreed),
+		SocialDominance:   clean(dominance),
+		WeightedSentiment: clean(weighted),
+		MarketRegime:      regime,
+	}
+}
+
+func (e *Extractor) buildLiquidityFeatures(snapshot exchange.MarketSnapshot, structure MarketStructureFeatures, volumeProfile VolumeProfileFeatures) LiquidityAnalysis {
+	var analysis LiquidityAnalysis
+	book := snapshot.OrderBook
+	if len(book.Asks) > 0 {
+		high := book.Asks[0].Price
+		low := book.Asks[0].Price
+		depth := min(10, len(book.Asks))
+		for i := 0; i < depth; i++ {
+			price := book.Asks[i].Price
+			if price > high {
+				high = price
+			}
+			if price < low {
+				low = price
+			}
+		}
+		analysis.LiquidityZones.AboveMarket = [2]float64{low, high}
+	}
+	if len(book.Bids) > 0 {
+		high := book.Bids[0].Price
+		low := book.Bids[0].Price
+		depth := min(10, len(book.Bids))
+		for i := 0; i < depth; i++ {
+			price := book.Bids[i].Price
+			if price > high {
+				high = price
+			}
+			if price < low {
+				low = price
+			}
+		}
+		analysis.LiquidityZones.BelowMarket = [2]float64{low, high}
+	}
+
+	if len(snapshot.Candles1H) >= 2 {
+		last := snapshot.Candles1H[len(snapshot.Candles1H)-1]
+		prev := snapshot.Candles1H[len(snapshot.Candles1H)-2]
+		upperWick := last.High - math.Max(last.Close, last.Open)
+		lowerWick := math.Min(last.Close, last.Open) - last.Low
+		body := math.Abs(last.Close - last.Open)
+		if upperWick > body*2 && last.Close < prev.Close {
+			analysis.LiquidityGrab = true
+		}
+		if lowerWick > body*2 && last.Close > prev.Close {
+			analysis.LiquidityGrab = true
+		}
+
+		if prev.High < last.Low {
+			analysis.FairValueGap = [2]float64{prev.High, last.Low}
+		} else if last.High < prev.Low {
+			analysis.FairValueGap = [2]float64{last.High, prev.Low}
+		}
+	}
+
+	if analysis.FairValueGap[0] == 0 && volumeProfile.VolumeGap[0] != 0 {
+		analysis.FairValueGap = volumeProfile.VolumeGap
+	}
+
+	return analysis
+}
+
+func clamp(value, minVal, maxVal float64) float64 {
+	if value < minVal {
+		return minVal
+	}
+	if value > maxVal {
+		return maxVal
+	}
+	return value
 }
 
 func stdDev(values []float64) float64 {

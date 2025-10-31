@@ -9,6 +9,7 @@ import (
 
 // Decision 表示大模型返回的交易指令。
 type Decision struct {
+	Symbol            string  `json:"symbol"`
 	Intent            string  `json:"intent"`
 	Direction         string  `json:"direction"`
 	TargetExposurePct float64 `json:"target_exposure_pct"`
@@ -23,10 +24,11 @@ type Decision struct {
 
 var (
 	validIntents = map[string]struct{}{
-		"OPEN":   {},
-		"ADJUST": {},
-		"CLOSE":  {},
-		"HEDGE":  {},
+		"OPEN":    {},
+		"ADJUST":  {},
+		"CLOSE":   {},
+		"HEDGE":   {},
+		"OBSERVE": {},
 	}
 	validDirections = map[string]struct{}{
 		"LONG":  {},
@@ -43,6 +45,9 @@ var (
 
 // Validate 校验决策字段合法性。
 func (d Decision) Validate() error {
+	if strings.TrimSpace(d.Symbol) == "" {
+		return errors.New("symbol 不能为空")
+	}
 	intent := strings.ToUpper(strings.TrimSpace(d.Intent))
 	if intent == "" {
 		return errors.New("intent 不能为空")
@@ -70,7 +75,7 @@ func (d Decision) Validate() error {
 		return fmt.Errorf("confidence 必须在 [0,1] 区间，目前为 %f", d.Confidence)
 	}
 
-	if d.Reasoning == "" {
+	if strings.TrimSpace(d.Reasoning) == "" {
 		return errors.New("reasoning 不能为空")
 	}
 
@@ -81,17 +86,21 @@ func (d Decision) Validate() error {
 		}
 	}
 
-	if strings.TrimSpace(d.NewStopLoss) == "" {
-		return errors.New("new_stop_loss 不能为空")
-	}
+	requireStops := intent == "OPEN" || intent == "ADJUST" || intent == "HEDGE"
 
-	if strings.TrimSpace(d.NewTakeProfit) == "" {
-		return errors.New("new_take_profit 不能为空")
-	}
-
-	if strings.TrimSpace(d.RiskComment) == "" {
-		return errors.New("risk_comment 不能为空")
+	if requireStops {
+		if strings.TrimSpace(d.NewStopLoss) == "" {
+			return errors.New("new_stop_loss 不能为空 (OPEN/ADJUST/HEDGE)")
+		}
+		if strings.TrimSpace(d.NewTakeProfit) == "" {
+			return errors.New("new_take_profit 不能为空 (OPEN/ADJUST/HEDGE)")
+		}
 	}
 
 	return nil
+}
+
+// DecisionEnvelope 用于解析多资产决策列表。
+type DecisionEnvelope struct {
+	Decisions []Decision `json:"decisions"`
 }

@@ -6,6 +6,8 @@
 
 - **市场数据采集**：通过 CCXT 抓取 Binance 合约端 1H / 4H K 线与深度盘口，统一封装为快照。
 - **指标与特征提取**：对多时间框架数据计算 EMA、MACD、RSI、ATR、量能、市场结构等特征，用于辅助策略决策。
+- **高级市场洞察**：额外输出合约持仓/资金费率、成交量分布、跨周期动量、综合情绪与流动性分析等增强指标，供 AI 与风控参考。
+- **多资产调度**：同时支持 BTC / ETH / SOL / DOGE 四个资产，统一收集行情、汇总持仓并一次性生成多资产决策。
 - **AI 决策引擎**：调用 OpenAI 模型（默认 GPT-4.1），基于特征和当前仓位得到结构化的操作建议、止损/止盈与风险提示。
 - **风险控制**：评估账户权益、信心阈值、可承受风险、日度止损等，输出目标仓位、最大风险金额以及最终执行依据。
 - **执行层**：根据目标仓位生成市场主单，并可附带止损/止盈触发单，通过 Hyperliquid 接口实际下达。
@@ -40,27 +42,35 @@
 
 ```json
 {
-  "intent": "OPEN|ADJUST|CLOSE|HEDGE",
-  "direction": "LONG|SHORT|FLAT|AUTO",
-  "target_exposure_pct": 0.0,
-  "adjustment_pct": 0.0,
-  "confidence": 0.0,
-  "reasoning": "...",
-  "order_preference": "MARKET|LIMIT|AUTO",
-  "new_stop_loss": "...",
-  "new_take_profit": "...",
-  "risk_comment": "..."
+  "decisions": [
+    {
+      "symbol": "BTC",
+      "intent": "OPEN|ADJUST|CLOSE|HEDGE|OBSERVE",
+      "direction": "LONG|SHORT|FLAT|AUTO",
+      "target_exposure_pct": 0.0,
+      "adjustment_pct": 0.0,
+      "confidence": 0.0,
+      "reasoning": "...",
+      "order_preference": "MARKET|LIMIT|AUTO",
+      "new_stop_loss": "...",
+      "new_take_profit": "...",
+      "risk_comment": "..."
+    }
+  ]
 }
 ```
 
-- **intent**：本次操作意图，`CLOSE` 表示直接将仓位降为 0；`HEDGE` 可用于反向操作或对冲。
-- **direction**：目标方向；`AUTO` 允许根据现有仓位或分析自行判断，`FLAT` 强制回到空仓。
-- **target_exposure_pct**：期望的仓位绝对占比（0~1），例如 `0.25` 表示 25% 净值；若 intent=CLOSE 请填 0。
-- **adjustment_pct**：在当前仓位基础上的相对调整幅度，可选；正值表示增加仓位，负值表示减仓，未调整填 0。
-- **confidence**：当前结论的可靠度，0~1 之间；风险层会根据信心阈值调节可用风险额度。
-- **order_preference**：下单方式偏好（默认 `AUTO`）。
-- **new_stop_loss / new_take_profit**：新的止损/止盈价格，必须为可解析的数值字符串。
-- **risk_comment**：任何额外的风险提示，用于帮助风控和监控记录。
+- **symbol**：资产代号，需与提示词中“=== 资产: XXX ===”一致，例如 `BTC`、`ETH`。
+- **intent**：本次操作意图，`OBSERVE` 表示仅观望不执行；`CLOSE` 代表平仓，`HEDGE` 可用于对冲或反手。
+- **direction**：目标方向；`AUTO` 按模型判断，`FLAT` 强制空仓。
+- **target_exposure_pct**：期望仓位绝对占比（0~1），`CLOSE` 时填 0。
+- **adjustment_pct**：可选，相对当前仓位的调整幅度；若不需要调整填 0。
+- **confidence**：结论可靠度，0~1。
+- **order_preference**：可选，下单方式偏好；为空时默认 AUTO。
+- **new_stop_loss / new_take_profit**：`OPEN/ADJUST/HEDGE` 必填，`CLOSE/OBSERVE` 可留空（或空字符串）。
+- **risk_comment**：补充风险提示，可留空。
+
+提示词会按照 `=== 资产: BTC ===` 分块提供每个标的的特征 JSON 与持仓摘要，并附带整合的持仓列表，模型需逐一返回对应资产的决策对象；若某资产暂不操作，可返回 `intent=OBSERVE` 并保持仓位不变。
 
 风险层会基于上述字段、账户参数以及最新行情重新评估目标仓位，必要时对目标进行裁剪或拒绝执行。执行层会将 `target_exposure_pct` 转换成具体手数，并根据 `order_preference` 和止损/止盈信息构造主单与保护单。 
 
@@ -87,14 +97,22 @@ go mod tidy
 ```yaml
 exchange:
   name: binanceusdm          # 行情端，保持为 binanceusdm
-  market: BTC/USDT:USDT      # Binance USDⓈ-M 合约标的
+  markets:                   # 支持多资产行情订阅
+    - BTC/USDT:USDT
+    - ETH/USDT:USDT
+    - SOL/USDT:USDT
+    - DOGE/USDT:USDT
   api_key: ""                 # 行情仅使用公共接口，可留空
   api_secret: ""
   api_password: ""
 
 trade_exchange:
   name: hyperliquid
-  market: BTC/USDC           # Hyperliquid 永续标的
+  markets:                   # 与上方行情列表一一对应
+    - BTC/USDC
+    - ETH/USDC
+    - SOL/USDC
+    - DOGE/USDC
   api_key: ""                 # 可选：若使用 API Key 鉴权
   api_secret: ""
   api_password: ""

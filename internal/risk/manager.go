@@ -52,6 +52,7 @@ func (m *Manager) Evaluate(ctx context.Context, input EvaluationInput) (Evaluati
 	}
 
 	result := EvaluationResult{
+		Symbol:      input.Symbol,
 		Status:      StatusDeny,
 		DailyStatus: status,
 		Notes:       make([]string, 0, 6),
@@ -76,6 +77,11 @@ func (m *Manager) Evaluate(ctx context.Context, input EvaluationInput) (Evaluati
 	direction := strings.ToUpper(strings.TrimSpace(input.Decision.Direction))
 	if direction == "" {
 		direction = "AUTO"
+	}
+
+	if intent == "OBSERVE" {
+		result.Notes = append(result.Notes, "模型建议观望，无需交易。")
+		return result, nil
 	}
 
 	if orderPref := strings.ToUpper(strings.TrimSpace(input.Decision.OrderPreference)); orderPref != "" {
@@ -241,6 +247,9 @@ func deriveDesiredExposure(intent, direction string, target, adjustment, current
 	dir := strings.ToUpper(direction)
 	inten := strings.ToUpper(intent)
 
+	if inten == "OBSERVE" {
+		return current
+	}
 	if inten == "CLOSE" || dir == "FLAT" {
 		return 0
 	}

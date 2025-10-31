@@ -22,25 +22,40 @@ import (
 	"trades-ai/internal/store"
 )
 
-type orchestrator struct {
-	market      *exchange.MarketDataService
-	extractor   *feature.Extractor
-	ai          *ai.Client
-	risk        *risk.Manager
-	executor    execution.Trader
-	positionMgr *position.Manager
-	monitor     *monitor.Service
-	logger      *zap.Logger
+type assetPipeline struct {
+	assetKey       string
+	exchangeSymbol string
+	tradeSymbol    string
+	market         *exchange.MarketDataService
+	extractor      *feature.Extractor
+	positionMgr    *position.Manager
+	executor       execution.Trader
+}
 
-	symbol           string
+type orchestrator struct {
+	assets  []assetPipeline
+	ai      *ai.Client
+	risk    *risk.Manager
+	monitor *monitor.Service
+	logger  *zap.Logger
+
 	decisionInterval time.Duration
 	lastDecision     time.Time
 }
 
-func newOrchestrator(client *exchange.Client, cfg orchestratorConfig, logger *zap.Logger, store *store.Store) (*orchestrator, error) {
-	market := exchange.NewMarketDataService(client, logger)
-	indicatorCalc := indicator.NewCalculator()
-	extractor := feature.NewExtractor(indicatorCalc, logger)
+type orchestratorConfig struct {
+	exchange  config.ExchangeConfig
+	trade     config.TradeExchangeConfig
+	openAI    config.OpenAIConfig
+	risk      config.RiskConfig
+	scheduler config.SchedulerConfig
+	execution config.ExecutionConfig
+}
+
+func newOrchestrator(cfg orchestratorConfig, logger *zap.Logger, store *store.Store) (*orchestrator, error) {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
 
 	aiClient, err := ai.NewClient(cfg.openAI, logger)
 	if err != nil {
@@ -54,16 +69,43 @@ func newOrchestrator(client *exchange.Client, cfg orchestratorConfig, logger *za
 
 	tradeClient, err := newTradeClient(cfg.trade)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("初始化交易客户端失败: %w", err)
 	}
-
-	positionMgr := position.NewManager(tradeClient, cfg.trade.Market, logger)
-
-	exec := execution.NewExecutor(tradeClient, cfg.trade.Market, cfg.execution.Slippage, logger)
 
 	monitorSvc, err := monitor.NewService(store, logger)
 	if err != nil {
 		return nil, fmt.Errorf("初始化监控服务失败: %w", err)
+	}
+
+	if len(cfg.exchange.Markets) != len(cfg.trade.Markets) {
+		return nil, fmt.Errorf("交易所与执行市场数量不一致: %d vs %d", len(cfg.exchange.Markets), len(cfg.trade.Markets))
+	}
+
+	assets := make([]assetPipeline, 0, len(cfg.exchange.Markets))
+	for i, exSymbol := range cfg.exchange.Markets {
+		tradeSymbol := cfg.trade.Markets[i]
+		assetKey := assetKeyFromSymbol(tradeSymbol)
+
+		exClient, err := exchange.NewClient(cfg.exchange, exSymbol, logger)
+		if err != nil {
+			return nil, fmt.Errorf("初始化行情客户端失败 (%s): %w", exSymbol, err)
+		}
+
+		marketSvc := exchange.NewMarketDataService(exClient, logger)
+		indicatorCalc := indicator.NewCalculator()
+		extractor := feature.NewExtractor(indicatorCalc, logger)
+		posMgr := position.NewManager(tradeClient, tradeSymbol, logger)
+		exec := execution.NewExecutor(tradeClient, tradeSymbol, cfg.execution.Slippage, logger)
+
+		assets = append(assets, assetPipeline{
+			assetKey:       assetKey,
+			exchangeSymbol: exSymbol,
+			tradeSymbol:    tradeSymbol,
+			market:         marketSvc,
+			extractor:      extractor,
+			positionMgr:    posMgr,
+			executor:       exec,
+		})
 	}
 
 	interval := cfg.scheduler.DecisionInterval
@@ -72,15 +114,11 @@ func newOrchestrator(client *exchange.Client, cfg orchestratorConfig, logger *za
 	}
 
 	return &orchestrator{
-		market:           market,
-		extractor:        extractor,
+		assets:           assets,
 		ai:               aiClient,
 		risk:             riskMgr,
-		executor:         exec,
-		positionMgr:      positionMgr,
 		monitor:          monitorSvc,
 		logger:           logger,
-		symbol:           cfg.trade.Market,
 		decisionInterval: interval,
 	}, nil
 }
@@ -91,107 +129,174 @@ func (o *orchestrator) Tick(ctx context.Context) error {
 		return nil
 	}
 
-	snapshot, err := o.market.GetSnapshot(ctx, exchange.DefaultSnapshotRequest())
-	if err != nil {
-		o.monitor.RecordError(ctx, "拉取市场数据失败", err, nil)
-		return err
+	assetStates := make([]assetState, 0, len(o.assets))
+	promptInputs := make([]ai.AssetInput, 0, len(o.assets))
+
+	var accountSnapshot ai.AccountSnapshot
+	var accountCaptured bool
+	var netExposure float64
+	var grossExposure float64
+
+	for i := range o.assets {
+		asset := &o.assets[i]
+
+		snapshot, err := asset.market.GetSnapshot(ctx, exchange.DefaultSnapshotRequest())
+		if err != nil {
+			o.monitor.RecordError(ctx, "拉取市场数据失败", err, map[string]interface{}{"symbol": asset.exchangeSymbol})
+			return err
+		}
+
+		features, err := asset.extractor.Extract(ctx, snapshot)
+		if err != nil {
+			o.monitor.RecordError(ctx, "特征计算失败", err, map[string]interface{}{"symbol": asset.exchangeSymbol})
+			return err
+		}
+		o.monitor.RecordMarketSnapshot(ctx, features)
+
+		balance, details, err := asset.positionMgr.FetchSnapshot(ctx)
+		if err != nil {
+			o.monitor.RecordError(ctx, "获取账户仓位失败", err, map[string]interface{}{"symbol": asset.tradeSymbol})
+			return err
+		}
+		o.monitor.RecordPosition(ctx, balance, details)
+
+		price := latestPrice(snapshot)
+		summary := aggregatePosition(details, balance, price)
+
+		assetStates = append(assetStates, assetState{
+			asset:    asset,
+			features: features,
+			balance:  balance,
+			summary:  summary,
+			price:    price,
+		})
+
+		promptInputs = append(promptInputs, ai.AssetInput{
+			Symbol:   asset.assetKey,
+			Features: features,
+			Position: summary,
+		})
+
+		exposure := exposureFromSummary(summary)
+		netExposure += exposure
+		grossExposure += math.Abs(exposure)
+
+		if !accountCaptured {
+			accountSnapshot = ai.AccountSnapshot{
+				Equity:           balance.TotalEquity,
+				Balance:          balance.TotalUSD,
+				FreeBalance:      balance.FreeUSD,
+				Withdrawable:     balance.Withdrawable,
+				MarginUsed:       balance.MarginUsed,
+				TotalNotional:    balance.TotalNotional,
+				UnrealizedPnL:    balance.Unrealized,
+				CrossEquity:      balance.CrossEquity,
+				CrossMarginUsed:  balance.CrossMarginUsed,
+				NetExposurePct:   0,
+				GrossExposurePct: 0,
+			}
+			accountCaptured = true
+		}
 	}
 
-	features, err := o.extractor.Extract(ctx, snapshot)
-	if err != nil {
-		o.monitor.RecordError(ctx, "特征计算失败", err, nil)
-		return err
+	if accountCaptured {
+		accountSnapshot.NetExposurePct = netExposure * 100
+		accountSnapshot.GrossExposurePct = grossExposure * 100
 	}
-	o.monitor.RecordMarketSnapshot(ctx, features)
 
-	balance, details, err := o.positionMgr.FetchSnapshot(ctx)
-	if err != nil {
-		o.monitor.RecordError(ctx, "获取账户仓位失败", err, nil)
-		return err
-	}
-	o.monitor.RecordPosition(ctx, balance, details)
-
-	price := latestPrice(snapshot)
-	summary := aggregatePosition(details, balance, price)
-
-	decision, err := o.ai.GenerateDecision(ctx, features, summary)
+	decisions, err := o.ai.GenerateDecision(ctx, promptInputs, accountSnapshot)
 	if err != nil {
 		o.monitor.RecordError(ctx, "AI 决策失败", err, nil)
 		return err
 	}
-	o.monitor.RecordDecision(ctx, features, decision)
 
-	exposurePercent := exposureFromSummary(summary)
-	account := risk.AccountState{
-		Equity:                 firstPositive(balance.TotalEquity, balance.TotalUSD),
-		Balance:                balance.TotalUSD,
-		CurrentExposurePercent: exposurePercent,
-		Timestamp:              snapshot.RetrievedAt,
+	decisionMap := make(map[string]ai.Decision, len(decisions))
+	for _, decision := range decisions {
+		key := strings.ToUpper(strings.TrimSpace(decision.Symbol))
+		decisionMap[key] = decision
 	}
 
-	input := risk.EvaluationInput{
-		Decision:    decision,
-		Features:    features,
-		Position:    summary,
-		Account:     account,
-		MarketPrice: price,
-	}
+	for _, state := range assetStates {
+		assetKey := strings.ToUpper(state.asset.assetKey)
+		decision, ok := decisionMap[assetKey]
+		if !ok {
+			o.logger.Warn("AI 未返回该资产决策", zap.String("asset", state.asset.assetKey))
+			continue
+		}
 
-	evaluation, err := o.risk.Evaluate(ctx, input)
-	if err != nil {
-		o.monitor.RecordError(ctx, "风险评估失败", err, nil)
-		return err
-	}
-	o.monitor.RecordRisk(ctx, input, evaluation)
+		o.monitor.RecordDecision(ctx, state.features, decision)
 
-	if evaluation.Status != risk.StatusProceed {
-		o.lastDecision = now
-		return nil
-	}
+		account := risk.AccountState{
+			Equity:                 firstPositive(state.balance.TotalEquity, state.balance.TotalUSD),
+			Balance:                state.balance.TotalUSD,
+			CurrentExposurePercent: exposureFromSummary(state.summary),
+			Timestamp:              state.features.GeneratedAt,
+		}
 
-	side := execution.OrderSideBuy
-	if evaluation.TargetExposurePercent < account.CurrentExposurePercent {
-		side = execution.OrderSideSell
-	}
+		evalInput := risk.EvaluationInput{
+			Symbol:      state.asset.assetKey,
+			Decision:    decision,
+			Features:    state.features,
+			Position:    state.summary,
+			Account:     account,
+			MarketPrice: state.price,
+		}
 
-	plan := execution.ExecutionPlan{
-		Symbol:          o.symbol,
-		Side:            side,
-		CurrentExposure: account.CurrentExposurePercent,
-		TargetExposure:  evaluation.TargetExposurePercent,
-		MarketPrice:     price,
-		RiskAmount:      evaluation.RiskAmount,
-		Decision:        decision,
-		RiskResult:      evaluation,
-		Account:         balance,
-		Position:        summary,
-		GeneratedAt:     now,
-	}
+		evaluation, err := o.risk.Evaluate(ctx, evalInput)
+		if err != nil {
+			o.monitor.RecordError(ctx, "风险评估失败", err, map[string]interface{}{"asset": state.asset.assetKey})
+			return err
+		}
+		o.monitor.RecordRisk(ctx, evalInput, evaluation)
 
-	orders, err := o.executor.BuildPlan(plan)
-	if err != nil {
-		o.monitor.RecordError(ctx, "生成执行计划失败", err, nil)
-		return err
-	}
+		if evaluation.Status != risk.StatusProceed {
+			continue
+		}
 
-	result, err := o.executor.Execute(ctx, orders)
-	if err != nil {
-		o.monitor.RecordError(ctx, "执行订单失败", err, nil)
-		return err
+		side := execution.OrderSideBuy
+		if evaluation.TargetExposurePercent < account.CurrentExposurePercent {
+			side = execution.OrderSideSell
+		}
+
+		plan := execution.ExecutionPlan{
+			Asset:           state.asset.assetKey,
+			Symbol:          state.asset.tradeSymbol,
+			Side:            side,
+			CurrentExposure: account.CurrentExposurePercent,
+			TargetExposure:  evaluation.TargetExposurePercent,
+			MarketPrice:     state.price,
+			RiskAmount:      evaluation.RiskAmount,
+			Decision:        decision,
+			RiskResult:      evaluation,
+			Account:         state.balance,
+			Position:        state.summary,
+			GeneratedAt:     now,
+		}
+
+		orders, err := state.asset.executor.BuildPlan(plan)
+		if err != nil {
+			o.monitor.RecordError(ctx, "生成执行计划失败", err, map[string]interface{}{"asset": state.asset.assetKey})
+			return err
+		}
+
+		result, err := state.asset.executor.Execute(ctx, orders)
+		if err != nil {
+			o.monitor.RecordError(ctx, "执行订单失败", err, map[string]interface{}{"asset": state.asset.assetKey})
+			return err
+		}
+		o.monitor.RecordExecution(ctx, plan, result)
 	}
-	o.monitor.RecordExecution(ctx, plan, result)
 
 	o.lastDecision = now
 	return nil
 }
 
-type orchestratorConfig struct {
-	exchange  config.ExchangeConfig
-	trade     config.TradeExchangeConfig
-	openAI    config.OpenAIConfig
-	risk      config.RiskConfig
-	scheduler config.SchedulerConfig
-	execution config.ExecutionConfig
+type assetState struct {
+	asset    *assetPipeline
+	features feature.FeatureSet
+	balance  position.AccountBalance
+	summary  position.Summary
+	price    float64
 }
 
 func newTradeClient(cfg config.TradeExchangeConfig) (*ccxt.Hyperliquid, error) {
@@ -312,4 +417,18 @@ func firstPositive(values ...float64) float64 {
 		}
 	}
 	return 0
+}
+
+func assetKeyFromSymbol(symbol string) string {
+	s := strings.TrimSpace(symbol)
+	if s == "" {
+		return ""
+	}
+	if idx := strings.Index(s, "/"); idx > 0 {
+		s = s[:idx]
+	}
+	if idx := strings.Index(s, ":"); idx > 0 {
+		s = s[:idx]
+	}
+	return strings.ToUpper(s)
 }

@@ -9,7 +9,6 @@ import (
 	"go.uber.org/zap"
 
 	"trades-ai/internal/config"
-	"trades-ai/internal/exchange"
 	"trades-ai/internal/store"
 )
 
@@ -34,15 +33,10 @@ func (a *App) Run(ctx context.Context) error {
 	a.logger.Info("交易系统已初始化",
 		zap.String("environment", a.cfg.App.Environment),
 		zap.String("exchange", a.cfg.Exchange.Name),
-		zap.String("market", a.cfg.Exchange.Market),
+		zap.Strings("markets", a.cfg.Exchange.Markets),
 	)
 
-	exClient, err := exchange.NewClient(a.cfg.Exchange, a.logger)
-	if err != nil {
-		return fmt.Errorf("初始化交易所客户端失败: %w", err)
-	}
-
-	orch, err := newOrchestrator(exClient, orchestratorConfig{
+	orch, err := newOrchestrator(orchestratorConfig{
 		exchange:  a.cfg.Exchange,
 		trade:     a.cfg.Trade,
 		openAI:    a.cfg.OpenAI,

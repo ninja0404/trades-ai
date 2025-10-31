@@ -18,6 +18,7 @@ const (
 
 // ExecutionPlan 描述一次交易执行的目标。
 type ExecutionPlan struct {
+	Asset           string
 	Symbol          string
 	Side            OrderSide
 	CurrentExposure float64

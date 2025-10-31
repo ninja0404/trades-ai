@@ -3,7 +3,11 @@ app:
 
 exchange:
   name: binanceusdm
-  market: BTC/USDT:USDT
+  markets:
+    - BTC/USDT:USDT
+    - ETH/USDT:USDT
+    - SOL/USDT:USDT
+    - DOGE/USDT:USDT
   api_key: ""
   api_secret: ""
   api_password: ""
@@ -15,19 +19,23 @@ exchange:
 
 trade_exchange:
   name: hyperliquid
-  market: BTC/USDC
+  markets:
+    - BTC/USDC
+    - ETH/USDC
+    - SOL/USDC
+    - DOGE/USDC
   api_key: ""
   api_secret: ""
   api_password: ""
-  use_sandbox: false
-  wallet_address: "0x1db46D86945095C6408AE7efb2Ee92c39295F967"
-  private_key: "fb2387b242ab9b452a1d4647dc5e359ce05b17696718f8dbc8304cedb92ffc06"
+  use_sandbox: true
+  wallet_address: "0x99Df3B05382b3e662aC20f67255B11aE17f0930d"
+  private_key: "b3c459f9493bde098d0640a6e582203afb257a006cc14ebb7795a5d83b218e1e"
 
 openai:
   api_key: "sk-fef11ff9ec234f1b8bdb57c4f0e91dfc"
   base_url: https://api.deepseek.com/v1
-  model: deepseek-chat
-  timeout: 60s
+  model: deepseek-reasoner
+  timeout: 180s
 
 risk:
   max_trade_risk: 0.01
@@ -58,6 +66,6 @@ logging:
     - stderr
 
 scheduler:
-  loop_interval: 5m
+  loop_interval: 3m
   decision_interval: 1h
   trend_interval: 4h

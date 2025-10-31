@@ -14,56 +14,41 @@ const (
 	envPrefix         = "trades"
 )
 
-// Load 读取配置文件并结合环境变量返回 Config。
-func Load(path string) (*Config, error) {
+// Load 从配置文件与环境变量读取配置。
+func Load(path string) (Config, error) {
 	v := viper.New()
-
-	if path == "" {
-		path = defaultConfigPath
-	}
-
-	v.SetConfigFile(path)
-	v.SetConfigType("yaml")
-
-	v.SetEnvPrefix(envPrefix)
-	replacer := strings.NewReplacer(".", "_")
-	v.SetEnvKeyReplacer(replacer)
-	v.AutomaticEnv()
-
 	setDefaults(v)
 
-	if err := v.ReadInConfig(); err != nil {
-		var notFound viper.ConfigFileNotFoundError
-		if errors.As(err, &notFound) {
-			return nil, fmt.Errorf("未找到配置文件 %q: %w", path, err)
-		}
-		return nil, fmt.Errorf("读取配置文件失败: %w", err)
+	if err := loadFile(v, path); err != nil {
+		return Config{}, err
 	}
+
+	bindEnv(v)
 
 	var cfg Config
 	if err := v.Unmarshal(&cfg, decodeHook()); err != nil {
-		return nil, fmt.Errorf("解析配置失败: %w", err)
+		return Config{}, fmt.Errorf("解析配置失败: %w", err)
 	}
 
 	if err := cfg.Validate(); err != nil {
-		return nil, err
+		return Config{}, err
 	}
 
-	return &cfg, nil
+	return cfg, nil
 }
 
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("app.environment", "development")
 
 	v.SetDefault("exchange.name", "binanceusdm")
-	v.SetDefault("exchange.market", "BTC/USDT:USDT")
+	v.SetDefault("exchange.markets", []string{"BTC/USDT:USDT"})
 	v.SetDefault("exchange.use_sandbox", false)
 	v.SetDefault("exchange.retry.max_attempts", 5)
 	v.SetDefault("exchange.retry.min_delay", "500ms")
 	v.SetDefault("exchange.retry.max_delay", "5s")
 
 	v.SetDefault("trade_exchange.name", "hyperliquid")
-	v.SetDefault("trade_exchange.market", "BTC/USDC")
+	v.SetDefault("trade_exchange.markets", []string{"BTC/USDC"})
 	v.SetDefault("trade_exchange.api_key", "")
 	v.SetDefault("trade_exchange.api_secret", "")
 	v.SetDefault("trade_exchange.api_password", "")
@@ -110,4 +95,29 @@ func decodeHook() viper.DecoderConfigOption {
 			mapstructure.StringToSliceHookFunc(","),
 		)
 	}
+}
+
+func loadFile(v *viper.Viper, path string) error {
+	configPath := strings.TrimSpace(path)
+	if configPath == "" {
+		configPath = defaultConfigPath
+	}
+
+	v.SetConfigFile(configPath)
+
+	if err := v.ReadInConfig(); err != nil {
+		var notFound viper.ConfigFileNotFoundError
+		if errors.As(err, &notFound) {
+			return fmt.Errorf("未找到配置文件 %s: %w", configPath, err)
+		}
+		return fmt.Errorf("读取配置文件失败: %w", err)
+	}
+
+	return nil
+}
+
+func bindEnv(v *viper.Viper) {
+	v.SetEnvPrefix(envPrefix)
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
 }

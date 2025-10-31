@@ -47,7 +47,7 @@ func main() {
 		}
 	}()
 
-	tradingApp := app.New(cfg, logger, sqliteStore)
+	tradingApp := app.New(&cfg, logger, sqliteStore)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
